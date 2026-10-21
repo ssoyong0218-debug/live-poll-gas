@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>실시간 참여</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<style>
+  :root { --bg: #FBF7F3; --ink: #1E1E1C; --muted: #7A766F; --line: #E6DFD7; --card: #F2ECE5; --brand: #5A61E4; --danger: #C9503C; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  button, input, textarea { font-family: inherit; }
+  .join { max-width: 520px; margin: 0 auto; padding: 24px 20px 32px; }
+  .j-top { display: flex; justify-content: space-between; align-items: center; font-size: 14px; color: var(--muted); margin-bottom: 20px; }
+  .j-top b { color: var(--ink); font-weight: 700; }
+  .j-q { margin: 0 0 20px; font-size: 24px; line-height: 1.35; font-weight: 800; letter-spacing: -0.02em; word-break: keep-all; }
+  .j-help { font-size: 14px; color: var(--muted); margin: 10px 2px 0; }
+  .j-input, .j-text { width: 100%; font-size: 18px; border: 1.5px solid var(--line); background: #fff; border-radius: 14px; padding: 15px 16px; color: var(--ink); outline: none; }
+  .j-input:focus, .j-text:focus { border-color: var(--brand); }
+  .j-text { min-height: 140px; resize: vertical; line-height: 1.55; }
+  .j-count { text-align: right; font-size: 13px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .j-submit { width: 100%; margin-top: 16px; border: 0; background: var(--brand); color: #fff; font-size: 18px; font-weight: 700; padding: 16px; border-radius: 14px; cursor: pointer; }
+  .j-submit:disabled { opacity: .45; cursor: default; }
+  .opts { display: flex; flex-direction: column; gap: 10px; }
+  .opt { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; border: 1.5px solid var(--line); background: #fff; border-radius: 14px; padding: 14px 16px; font-size: 17px; line-height: 1.4; color: var(--ink); cursor: pointer; word-break: keep-all; }
+  .opt .dot { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 2px solid #CFC7BD; }
+  .opt.sel { border-color: var(--brand); background: #F1F1FD; }
+  .opt.sel .dot { border: 7px solid var(--brand); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .chip { background: var(--card); border-radius: 999px; padding: 7px 14px; font-size: 15px; }
+  .done { text-align: center; padding: 30px 10px 10px; }
+  .done .check { width: 64px; height: 64px; border-radius: 50%; background: #E7F3EA; color: #3D8A57; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px; }
+  .done h2 { margin: 0 0 8px; font-size: 22px; }
+  .done p { margin: 0; color: var(--muted); line-height: 1.5; white-space: pre-line; }
+  .done .mine { margin-top: 18px; background: var(--card); border-radius: 14px; padding: 14px 16px; text-align: left; line-height: 1.5; word-break: keep-all; overflow-wrap: anywhere; }
+  .j-err { margin-top: 12px; color: var(--danger); font-size: 14px; min-height: 1.2em; }
+  .j-loading { color: var(--muted); padding: 40px 0; text-align: center; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div id="app" class="join"><div class="j-loading">불러오는 중…</div></div>
+<script>
+(function () {
+  'use strict';
+  // 실시간 참여 서버(Apps Script 웹앱) 주소
+  var API = 'https://script.google.com/macros/s/AKfycbwxBvNxJ7lewxmF2oE7PWFOgEJBRnzPCpQJd_kq8Nj0Rm0AGghgPD2b4xc3k4EF4ytDKQ/exec';
+
+  // 참여 코드: QR·링크 주소의 ?k= 값 (코드가 없으면 참여할 수 없음)
+  var KEY = '';
+  try { KEY = new URLSearchParams(location.search).get('k') || ''; } catch (e) { KEY = ''; }
+
+  var root = document.getElementById('app');
+  var st = null, sig = '', pollTimer = null, sending = false, drafts = {}, stopped = false;
+  var cid = clientId();
+
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function store(get, k, v) {
+    try { if (get) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; }
+  }
+  function clientId() {
+    var id = store(true, 'rt_cid');
+    if (!id || !/^[a-z0-9]{8,40}$/i.test(id)) { id = 'c' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36); store(false, 'rt_cid', id); }
+    return id;
+  }
+  function mineKey() { return st.slide.id + '_' + st.gen; }
+  function loadMine() { try { return (JSON.parse(store(true, 'rt_mine') || '{}')[mineKey()]) || []; } catch (e) { return []; } }
+  function saveMine(v) { try { var all = JSON.parse(store(true, 'rt_mine') || '{}'); (all[mineKey()] = all[mineKey()] || []).push(v); store(false, 'rt_mine', JSON.stringify(all)); } catch (e) {} }
+
+  // 구글 로그인 정보(쿠키)를 보내지 않고 서버와 통신
+  function getState() {
+    return fetch(API + '?api=state&k=' + encodeURIComponent(KEY) + '&cid=' + encodeURIComponent(cid) + '&t=' + Date.now(), { credentials: 'omit', cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); });
+  }
+  function postSubmit(slideId, value) {
+    return fetch(API, {
+      method: 'POST', credentials: 'omit', cache: 'no-store',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'submit', slideId: slideId, value: value, cid: cid, k: KEY })
+    }).then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); });
+  }
+  function retry(fn, tries) {
+    var i = 0;
+    function go() {
+      return fn().then(function (r) {
+        if (r && r.retry && ++i < tries) return sleep(800 * Math.pow(2, i - 1) + Math.random() * 600).then(go);
+        return r;
+      }, function (e) {
+        if (++i >= tries) throw e;
+        return sleep(800 * Math.pow(2, i - 1) + Math.random() * 600).then(go);
+      });
+    }
+    return go();
+  }
+
+  function render() {
+    var s = st.slide;
+    root.innerHTML = '';
+    var top = el('div', 'j-top');
+    var l = el('span'); l.appendChild(el('b', null, '실시간 참여'));
+    top.appendChild(l); top.appendChild(el('span', null, (st.idx + 1) + ' / ' + st.total));
+    root.appendChild(top);
+    root.appendChild(el('h1', 'j-q', s.question));
+
+    var mine = loadMine();
+    if (st.used >= st.max) return renderDone(mine);
+    if (st.closed) return renderNote('응답이 마감되었어요', '화면을 봐 주세요.\n다음 질문으로 넘어가면 자동으로 바뀌어요.');
+
+    var err = el('div', 'j-err'), go;
+    if (s.type === 'choice') {
+      var sel = -1, opts = el('div', 'opts'), btns = [];
+      s.options.forEach(function (label, i) {
+        var b = el('button', 'opt'); b.type = 'button';
+        b.appendChild(el('span', 'dot')); b.appendChild(el('span', null, label));
+        b.onclick = function () { sel = i; btns.forEach(function (x, j) { x.classList.toggle('sel', j === i); }); go.disabled = false; };
+        btns.push(b); opts.appendChild(b);
+      });
+      root.appendChild(opts);
+      go = el('button', 'j-submit', '제출'); go.disabled = true;
+      go.onclick = function () { if (sel >= 0) send(sel, s.options[sel], go, err); };
+      root.appendChild(go);
+    } else {
+      var isOpen = s.type === 'open';
+      var input = isOpen ? el('textarea', 'j-text') : el('input', 'j-input');
+      if (!isOpen) { input.type = 'text'; input.setAttribute('enterkeyhint', 'send'); input.autocomplete = 'off'; }
+      input.maxLength = s.maxLength;
+      input.placeholder = isOpen ? '의견을 입력하세요' : '단어를 입력하세요';
+      input.value = drafts[mineKey()] || '';
+      root.appendChild(input);
+      var cnt = el('div', 'j-count');
+      root.appendChild(cnt);
+      go = el('button', 'j-submit', '제출');
+      var upd = function () { cnt.textContent = Array.from(input.value).length + ' / ' + s.maxLength; go.disabled = !input.value.trim(); drafts[mineKey()] = input.value; };
+      go.onclick = function () { var v = input.value.trim(); if (v) send(v, v, go, err, input); };
+      input.addEventListener('input', upd);
+      if (!isOpen) input.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); go.click(); } });
+      root.appendChild(go);
+      var word = isOpen ? '의견' : '단어', left = st.max - st.used;
+      root.appendChild(el('p', 'j-help', st.max > 1 ? word + '를 ' + left + '개 더 낼 수 있어요' : word + ' 1개를 낼 수 있어요'));
+      if (mine.length) { var chips = el('div', 'chips'); mine.forEach(function (m) { chips.appendChild(el('span', 'chip', m)); }); root.appendChild(chips); }
+      upd();
+    }
+    root.appendChild(err);
+  }
+
+  function renderDone(mine) {
+    var d = el('div', 'done'), ck = el('div', 'check');
+    ck.innerHTML = '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+    d.appendChild(ck);
+    d.appendChild(el('h2', null, '응답이 제출되었어요'));
+    d.appendChild(el('p', null, '화면을 봐 주세요 👀\n다음 질문으로 넘어가면 자동으로 바뀌어요.'));
+    if (mine.length) d.appendChild(el('div', 'mine', mine.join(' · ')));
+    root.appendChild(d);
+  }
+  function renderNote(title, body) {
+    var d = el('div', 'done');
+    d.appendChild(el('h2', null, title)); d.appendChild(el('p', null, body));
+    root.appendChild(d);
+  }
+
+  function send(value, label, btn, err, input) {
+    if (sending) return;
+    sending = true; btn.disabled = true; btn.textContent = '보내는 중…'; err.textContent = '';
+    retry(function () { return postSubmit(st.slide.id, value); }, 4).then(function (r) {
+      sending = false;
+      if (r.denied) { showDenied(); return; }
+      if (r.ok) { saveMine(label); delete drafts[mineKey()]; st.used = r.used; st.max = r.max; render(); return; }
+      if (r.moved && r.state) { apply(r.state, true); return; }
+      if (r.closed) { st.closed = true; render(); return; }
+      if (r.done) { st.used = r.used; render(); return; }
+      btn.disabled = false; btn.textContent = '제출'; err.textContent = r.reason || '다시 시도해 주세요.';
+      if (input) input.focus();
+    }, function () {
+      sending = false; btn.disabled = false; btn.textContent = '제출';
+      err.textContent = '접속이 많아 잠시 지연되고 있어요. 다시 눌러 주세요.';
+    });
+  }
+
+  function showDenied() {
+    clearTimeout(pollTimer); pollTimer = null; stopped = true;
+    root.innerHTML = '';
+    var d = el('div', 'j-loading', '참여 링크가 올바르지 않거나 만료되었어요.\n진행자 화면의 QR 코드로 다시 들어와 주세요.');
+    d.style.whiteSpace = 'pre-line';
+    root.appendChild(d);
+  }
+
+  function apply(s, force) {
+    if (s && s.denied) { showDenied(); return; }
+    if (!s || !s.slide) return;
+    var nsig = JSON.stringify([s.idx, s.gen, s.closed, s.slide.id]);
+    var usedChanged = !st || s.used !== st.used;
+    st = s;
+    if (force || nsig !== sig || usedChanged) { sig = nsig; if (!sending) render(); }
+  }
+
+  function poll() {
+    clearTimeout(pollTimer);
+    if (stopped) return;
+    if (document.hidden) { pollTimer = setTimeout(poll, 15000); return; }
+    getState().then(function (s) { apply(s); }, function () {}).then(function () {
+      pollTimer = setTimeout(poll, 4000 + Math.random() * 3000);
+    });
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
+
+  if (!KEY) { showDenied(); return; }
+  retry(getState, 6).then(function (s) { apply(s, true); if (!stopped) poll(); }, function () {
+    root.innerHTML = '';
+    root.appendChild(el('div', 'j-loading', '접속이 많아 불러오지 못했어요.\n잠시 후 새로고침해 주세요.'));
+    root.firstChild.style.whiteSpace = 'pre-line';
+  });
+})();
+</script>
+</body>
+</html>
