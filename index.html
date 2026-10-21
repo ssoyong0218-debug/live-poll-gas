@@ -38,6 +38,16 @@
   .done .mine { margin-top: 18px; background: var(--card); border-radius: 14px; padding: 14px 16px; text-align: left; line-height: 1.5; word-break: keep-all; overflow-wrap: anywhere; }
   .j-err { margin-top: 12px; color: var(--danger); font-size: 14px; min-height: 1.2em; }
   .j-loading { color: var(--muted); padding: 40px 0; text-align: center; line-height: 1.6; }
+  .j-kicker { font-size: 15px; color: var(--muted); margin: -8px 0 14px; }
+  .j-sent { font-size: 20px; font-weight: 700; line-height: 1.5; word-break: keep-all; white-space: pre-line; }
+  .j-sent .j-input { margin: 8px 0; font-weight: 600; border-color: #9DD2C3; }
+  .j-sent .j-input:focus { border-color: #3FA38A; }
+  .j-ex-label { font-size: 14px; color: var(--muted); margin: 18px 2px 8px; }
+  .j-ex { display: flex; flex-wrap: wrap; gap: 8px; }
+  .j-ex button { border: 1.5px solid #3FA38A; background: #fff; color: #2E7D69; border-radius: 999px; padding: 9px 15px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  .j-ex button:active { background: #EAF6F2; }
+  .done .mine.sent { white-space: pre-line; font-weight: 600; }
+  .done .mine.sent b { color: #2E7D69; }
 </style>
 </head>
 <body>
@@ -103,14 +113,43 @@
     var l = el('span'); l.appendChild(el('b', null, '실시간 참여'));
     top.appendChild(l); top.appendChild(el('span', null, (st.idx + 1) + ' / ' + st.total));
     root.appendChild(top);
-    root.appendChild(el('h1', 'j-q', s.question));
+    var isBlank = s.type === 'blank';
+    root.appendChild(el('h1', 'j-q', isBlank ? (s.title || '빈칸을 채워 문장을 완성해 주세요') : s.question));
 
     var mine = loadMine();
-    if (st.used >= st.max) return renderDone(mine);
+    if (st.used >= st.max) return isBlank ? renderBlankDone(s, mine) : renderDone(mine);
     if (st.closed) return renderNote('응답이 마감되었어요', '화면을 봐 주세요.\n다음 질문으로 넘어가면 자동으로 바뀌어요.');
 
     var err = el('div', 'j-err'), go;
-    if (s.type === 'choice') {
+    if (isBlank) {
+      var sent = el('div', 'j-sent');
+      sent.appendChild(el('div', null, s.before || ''));
+      var bin = el('input', 'j-input');
+      bin.type = 'text'; bin.setAttribute('enterkeyhint', 'send'); bin.autocomplete = 'off';
+      bin.maxLength = s.maxLength || 30; bin.placeholder = '빈칸에 들어갈 말';
+      bin.value = drafts[mineKey()] || '';
+      sent.appendChild(bin);
+      sent.appendChild(el('div', null, s.after || ''));
+      root.appendChild(sent);
+      var bcnt = el('div', 'j-count'); root.appendChild(bcnt);
+      go = el('button', 'j-submit', '제출');
+      var bupd = function () { bcnt.textContent = Array.from(bin.value).length + ' / ' + (s.maxLength || 30); go.disabled = !bin.value.trim(); drafts[mineKey()] = bin.value; };
+      go.onclick = function () { var v = bin.value.trim(); if (v) send(v, v, go, err, bin); };
+      bin.addEventListener('input', bupd);
+      bin.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); go.click(); } });
+      root.appendChild(go);
+      if (s.examples && s.examples.length) {
+        root.appendChild(el('div', 'j-ex-label', '예를 들면 (누르면 채워져요)'));
+        var exw = el('div', 'j-ex');
+        s.examples.forEach(function (x) {
+          var b = el('button', null, x); b.type = 'button';
+          b.onclick = function () { bin.value = x; bupd(); bin.focus(); };
+          exw.appendChild(b);
+        });
+        root.appendChild(exw);
+      }
+      bupd();
+    } else if (s.type === 'choice') {
       var sel = -1, opts = el('div', 'opts'), btns = [];
       s.options.forEach(function (label, i) {
         var b = el('button', 'opt'); b.type = 'button';
@@ -153,6 +192,21 @@
     d.appendChild(el('h2', null, '응답이 제출되었어요'));
     d.appendChild(el('p', null, '화면을 봐 주세요 👀\n다음 질문으로 넘어가면 자동으로 바뀌어요.'));
     if (mine.length) d.appendChild(el('div', 'mine', mine.join(' · ')));
+    root.appendChild(d);
+  }
+  function renderBlankDone(s, mine) {
+    var d = el('div', 'done'), ck = el('div', 'check');
+    ck.innerHTML = '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+    d.appendChild(ck);
+    d.appendChild(el('h2', null, '응답이 제출되었어요'));
+    d.appendChild(el('p', null, '화면을 봐 주세요 👀\n다음 질문으로 넘어가면 자동으로 바뀌어요.'));
+    if (mine.length) {
+      var m = el('div', 'mine sent');
+      m.appendChild(document.createTextNode((s.before || '') + ' '));
+      m.appendChild(el('b', null, mine[mine.length - 1]));
+      m.appendChild(document.createTextNode(' ' + (s.after || '')));
+      d.appendChild(m);
+    }
     root.appendChild(d);
   }
   function renderNote(title, body) {
